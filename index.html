@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Pi-hole Notifier</title>
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="./node_modules/bootstrap/dist/css/bootstrap.min.css">
+    <script src="./js/helper.js"></script> 
+</head>
+<body>
+    <div class="alert alert-danger" role="alert" id="alert" style="display: none;"></div>
+    <div id="piHoleSetup" style="margin: 10px">
+        <div class="input-group input-group-sm mb-2">
+            <input type="text" class="form-control" aria-label="Small" aria-describedby="inputGroup-sizing-sm" id="pi-hole-url" placeholder="Enter Pi-hole URL"/>
+            <button id="btn-check-api" class="btn btn-primary btn-sm" style="margin-left: 5px;">ENABLE</button>
+        </div>
+    </div>
+    <div id="piHoleChecks" style="margin: 10px">
+        <ul class="list-group">
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                    Domains Being Blocked
+                <span id="domainsBeingBlocked" class="badge badge-primary badge-pill">-</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                    DNS Queries Today
+                <span id="dnsQueriesToday" class="badge badge-primary badge-pill">-</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                    Queries Blocked
+                <span id="queriesBlocked" class="badge badge-primary badge-pill">-</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                    Percent Blocked
+                <span id="percentBlocked" class="badge badge-primary badge-pill">-</span>
+            </li>                        
+        </ul>
+    </div>
+
+    <script type='text/javascript'>
+        const got = require('got');
+        const notifier = require('node-notifier');
+        const jsonDiff = require('json-diff');
+
+        let jsonOrig = null;
+        let piHoleBaseUrl = null;
+        let piHoleVersion = null;
+
+        document.getElementById("btn-check-api").addEventListener("click", () => {
+            piHoleBaseUrl = null,
+            piHoleVersion = null,
+            piHoleBaseUrl = document.getElementById("pi-hole-url").value,
+            checkApi(piHoleBaseUrl).then(doIt)
+        }, false);
+
+        const piHoleVersionUrl = "/admin/api.php?version";
+        const piHoleSummaryUrl = "/admin/api.php?summary";
+        function versionApiUrl(piHoleBaseUrl)
+        {
+            return piHoleBaseUrl + piHoleVersionUrl;
+        }
+        function summaryApiUrl(piHoleBaseUrl)
+        {
+            return piHoleBaseUrl + piHoleSummaryUrl;
+        }
+
+        async function checkApi(piHoleBaseUrl)
+        {
+            if (validURL(piHoleBaseUrl) == true)
+            {
+                hideAlert();
+                const response = await got(versionApiUrl(piHoleBaseUrl), { json: true }).then(response => {
+                    piHoleVersion = response.body.version;
+                }).catch(error => {
+                    piHoleVersion = null;
+                });
+            }
+            else
+            {
+                tryAgain();
+            }
+        }
+
+        function doIt()
+        {
+            if (piHoleVersion == 3)
+            {
+                piHoleApiSuccess = true;
+                document.getElementById("pi-hole-url").disabled = true;
+                successCheckApiButton(document.getElementById("btn-check-api"), "SUCCESS");
+                getResultFromApi();
+                setInterval(getResultFromApi, 5000);
+            }
+            else
+            {
+                piHoleApiSuccess = false;
+                tryAgain();
+            }
+        }
+
+        async function getResultFromApi()
+        {
+            try 
+            {
+                let response = await got(summaryApiUrl(piHoleBaseUrl), { json: true });
+                
+                if (response)
+                {
+                    if (jsonOrig == null)
+                    {
+                        jsonOrig = response.body;
+
+                        successBadgePills(document.getElementById("domainsBeingBlocked"), response.body.domains_being_blocked);
+                        successBadgePills(document.getElementById("dnsQueriesToday"), response.body.dns_queries_today);
+                        successBadgePills(document.getElementById("queriesBlocked"), response.body.ads_blocked_today);
+                        successBadgePills(document.getElementById("percentBlocked"), response.body.ads_percentage_today);
+                    }
+                    else
+                    {
+                        let message = "";
+                        if (jsonDiff.diffString(jsonOrig.domains_being_blocked, response.body.domains_being_blocked).length > 0) {
+                            message += "Domains Being Blocked: " + response.body.domains_being_blocked + "\n";
+                            warningBadgePills(document.getElementById("domainsBeingBlocked"), response.body.domains_being_blocked);
+                        }
+                        else {
+                            successBadgePills(document.getElementById("domainsBeingBlocked"), response.body.domains_being_blocked);
+                        }
+
+                        if (jsonDiff.diffString(jsonOrig.dns_queries_today, response.body.dns_queries_today).length > 0) {
+                            message += "DNS Queries Today: " + response.body.dns_queries_today + "\n";;
+                            warningBadgePills(document.getElementById("dnsQueriesToday"), response.body.dns_queries_today);
+                        }
+                        else {
+                            successBadgePills(document.getElementById("dnsQueriesToday"), response.body.dns_queries_today);
+                        }
+
+                        if (jsonDiff.diffString(jsonOrig.ads_blocked_today, response.body.ads_blocked_today).length > 0) {
+                            message += "Queries Blocked: " + response.body.ads_blocked_today + "\n";;
+                            warningBadgePills(document.getElementById("queriesBlocked"), response.body.ads_blocked_today);
+                        }
+                        else {
+                            successBadgePills(document.getElementById("queriesBlocked"), response.body.ads_blocked_today);
+                        }
+
+                        if (jsonDiff.diffString(jsonOrig.ads_percentage_today, response.body.ads_percentage_today).length > 0)
+                        {
+                            message += "Percent Blocked: " + response.body.ads_percentage_today + "%\n";;
+                            warningBadgePills(document.getElementById("percentBlocked"), response.body.ads_percentage_today);
+                        }
+                        else {
+                            successBadgePills(document.getElementById("percentBlocked"), response.body.ads_percentage_today);
+                        }
+
+                        jsonOrig = response.body;
+
+                        notifier.notify({
+                            title: "Pi-hole Notification",
+                            message:  message
+                        });
+                    }
+                }
+                else
+                {
+                    tryAgain();
+                }
+            }
+            catch {
+                console.log("getResultFromApi: Error");
+                tryAgain();
+            }
+        }
+    </script>
+</body>
+</html>
